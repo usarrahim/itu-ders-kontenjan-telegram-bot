@@ -109,38 +109,38 @@ def parse_html_ders_list(html_text, branscode):
     except Exception:
         return DersListesi(ders_program_list=[], guncellenme_saati="")
 
-async def check_contenjan(derscode, derslistmy, branch_id):
+async def check_contenjan(derscode, derslistmy, branch_id, telegram_bot):
+    """Kontenjan kontrolü - çok kullanıcılı"""
     if derslistmy is None:
         return
     
-    # Bu ders için bildirim alacak kullanıcıları bul
+    # Bu dersi takip eden kullanıcıları getir
     users = db.get_users_by_course(derscode, branch_id)
+    
+    if not users:
+        return  # Kimse bu dersi takip etmiyor
     
     for i in derslistmy.ders_program_list:
         if (i.ders_kodu == derscode) and (i.ogrenci_sayisi != i.kontenjan):
             available_spots = i.kontenjan - i.ogrenci_sayisi
-            message = f"🎓 **Kontenjan Açıldı!**\n\n" \
-                     f"📚 **Ders:** {i.ders_adi}\n" \
-                     f"🔢 **Ders Kodu:** {i.ders_kodu}\n" \
-                     f"📊 **Mevcut Kontenjan:** {available_spots}\n" \
-                     f"🏫 **CRN:** {i.crn}\n" \
-                     f"👨‍🏫 **Öğretim Üyesi:** {i.ad_soyad}\n" \
-                     f"📍 **Derslik:** {i.mekan_adi}\n" \
-                     f"🕐 **Saat:** {i.baslangic_saati} - {i.bitis_saati}\n" \
-                     f"📅 **Gün:** {i.gun_adi_tr}"
             
-            # Tüm kullanıcılara bildirim gönder
+            # Her kullanıcıya ayrı ayrı bildirim gönder
             for user in users:
+                message = f"🎓 **Kontenjan Açıldı!**\n\n" \
+                         f"📚 **Ders:** {i.ders_adi}\n" \
+                         f"🔢 **Ders Kodu:** {i.ders_kodu}\n" \
+                         f"📊 **Mevcut Kontenjan:** {available_spots}\n" \
+                         f"🏫 **CRN:** {i.crn}\n" \
+                         f"👨‍🏫 **Öğretim Üyesi:** {i.ad_soyad}\n" \
+                         f"📍 **Derslik:** {i.mekan_adi}\n" \
+                         f"🕐 **Saat:** {i.baslangic_saati} - {i.bitis_saati}\n" \
+                         f"📅 **Gün:** {i.gun_adi_tr}"
+                
                 try:
-                    await bot.send_message(
-                        chat_id=user['chat_id'], 
-                        text=message,
-                        parse_mode='Markdown'
-                    )
-                    logger.info(f"Bildirim gönderildi: {user['chat_id']} - {derscode}")
+                    await telegram_bot.send_notification(user['chat_id'], message)
+                    logger.info(f"Bildirim gönderildi: {derscode} -> {user['first_name']} ({user['chat_id']})")
                 except Exception as e:
-                    logger.error(f"Bildirim gönderme hatası: {e} - {user['chat_id']}")
-    
+                    logger.error(f"Bildirim gönderme hatası: {e}")
 
 async def check_list(branscode):
     try:
@@ -148,15 +148,11 @@ async def check_list(branscode):
             link = f"https://obs.itu.edu.tr/public/DersProgram/DersProgramSearch?ProgramSeviyeTipiAnahtari=LS&dersBransKoduId={branscode}"
             response = await client.get(link)
             print(f"API Status Code: {response.status_code}")
-            print(f"Response Content Type: {response.headers.get('content-type', 'Unknown')}")
             
             if response.status_code == 200:
-                # Response içeriğini kontrol et
                 response_text = response.text
                 print(f"Response Length: {len(response_text)}")
-                print(f"First 200 chars: {response_text[:200]}")
                 
-                # JSON parsing'i dene
                 try:
                     response_json = response.json()
                     print("JSON parsing başarılı")
@@ -164,52 +160,43 @@ async def check_list(branscode):
                     return derslist
                 except Exception as json_error:
                     print(f"JSON parsing hatası: {json_error}")
-                    # HTML parse fallback
                     derslist = parse_html_ders_list(response_text, branscode)
                     print(f"HTML parse ile {len(derslist.ders_program_list)} ders bulundu")
                     return derslist
             else:
                 print(f"Hata: {response.status_code} hatası aldınız.")
-                print(f"Response text: {response.text}")
-                await bot.send_message(chat_id=CHAT_ID, text=f"Hata: {response.status_code} hatası aldınız.")
                 return None
     except Exception as e:
         print(f"API çağrısında hata: {e}")
-        await bot.send_message(chat_id=CHAT_ID, text=f"API çağrısında hata: {e}")
         return None
-  
-
-
-
 
 # Telegram bot API token
 API_TOKEN = os.getenv('BOT_TOKEN', '8354560097:AAHifiQmARkiVHj4IUHtsvE3iNgIeT4BpuU')
 
-# Bot oluşturma
-bot = Bot(token=API_TOKEN)
+# Telegram bot oluştur
+telegram_bot = TelegramBot(API_TOKEN)
 
 async def main():
-    """Ana kontrol fonksiyonu - tüm kullanıcıların derslerini kontrol eder"""
+    """Ana kontrol fonksiyonu - çok kullanıcılı"""
     try:
         logger.info("Ders programı kontrol ediliyor...")
         
-        # Tüm aktif kullanıcıları ve derslerini al
-        users = db.get_all_active_users()
+        # Tüm aktif kullanıcıları ve derslerini getir
+        all_users = db.get_all_active_users()
         
-        if not users:
-            logger.info("Aktif kullanıcı bulunamadı.")
+        if not all_users:
+            logger.info("Takip edilen ders bulunmuyor.")
             return
         
-        # Dersleri branş koduna göre grupla
+        # Dersleri branş ID'lerine göre grupla
         courses_by_branch = {}
-        for user in users:
-            for course in user.get('courses', []):
-                branch_id = course['branch_id']
-                course_code = course['course_code']
-                
-                if branch_id not in courses_by_branch:
-                    courses_by_branch[branch_id] = set()
-                courses_by_branch[branch_id].add(course_code)
+        for user in all_users:
+            branch_id = user['branch_id']
+            course_code = user['course_code']
+            
+            if branch_id not in courses_by_branch:
+                courses_by_branch[branch_id] = set()
+            courses_by_branch[branch_id].add(course_code)
         
         # Her branş için kontrol yap
         for branscode, ders_kodlari in courses_by_branch.items():
@@ -218,7 +205,8 @@ async def main():
             
             if derslistmy:
                 for ders_kodu in ders_kodlari:
-                    await check_contenjan(derscode=ders_kodu, derslistmy=derslistmy, branch_id=branscode)
+                    await check_contenjan(derscode=ders_kodu, derslistmy=derslistmy, 
+                                        branch_id=branscode, telegram_bot=telegram_bot)
         
         logger.info("Kontrol tamamlandı.")
         
@@ -226,7 +214,7 @@ async def main():
         logger.error(f"Ana fonksiyonda hata: {e}")
 
 async def run_monitoring():
-    """Kontenjan kontrol döngüsü"""
+    """Monitoring döngüsü"""
     logger.info("Kontenjan kontrol botu başlatıldı.")
     
     while True:
@@ -242,7 +230,6 @@ async def run_monitoring():
 
 async def run_telegram_bot():
     """Telegram bot'u çalıştır"""
-    telegram_bot = TelegramBot()
     await telegram_bot.run_async()
 
 async def main_async():
