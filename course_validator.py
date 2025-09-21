@@ -7,6 +7,7 @@ class CourseValidator:
         'MAT': 26,   # Matematik
         'FIZ': 28,   # Fizik
         'KIM': 30,   # Kimya
+        'BIO': 30,   # Biyoloji
         'BIL': 32,   # Bilgisayar Mühendisliği
         'MAK': 34,   # Makine Mühendisliği
         'INS': 36,   # İnşaat Mühendisliği
@@ -87,6 +88,7 @@ class CourseValidator:
             'MAT': 'Matematik',
             'FIZ': 'Fizik',
             'KIM': 'Kimya',
+            'BIO': 'Biyoloji',
             'BIL': 'Bilgisayar Mühendisliği',
             'MAK': 'Makine Mühendisliği',
             'INS': 'İnşaat Mühendisliği',
